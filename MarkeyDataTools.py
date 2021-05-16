@@ -6,16 +6,23 @@ import matplotlib.pyplot as plt
 pd.set_option('display.max_colwidth', 0)
 
 class MarkeyDataTools:
+    # first, it stores the key (I think the key is not really required...)
+    # For now, the available regions is state, county, county subdivision and tract.
+    # I can add more if needed
     def __init__(self):
         self.key = 'ba1c94e9a1b43440cf3ef2bf0b7803ddc39bcf2d'
         self.census_available_region = np.array(['state','county','county subdivision','tract'])
 
-        
+    # This doesn't really do much thing, but when the user defines ths region argument, 
+    # I want to make sure that they are in the list self.census_available_region 
     def find_census_region(self, search_value):
         pattern = re.compile(f'{search_value}$', flags = re.I)
         index = list(map(lambda x: bool(re.search(pattern, x)), self.census_available_region))
         return(self.census_available_region[index][0])
-        
+    
+    
+    # With the given year, it provides the list of variable groups contained in the acs5 dataset
+    # It also shows the variable groups contained in the acs5/profile dataset.
     def get_acs_groups(self, year):
         response_acs5 = requests.get(f'https://api.census.gov/data/{year}/acs/acs5/groups')
         response_profile = requests.get(f'https://api.census.gov/data/{year}/acs/acs5/profile/groups')
@@ -31,6 +38,17 @@ class MarkeyDataTools:
         groups = pd.concat([acs5, profile], ignore_index = True)
         groups = groups.iloc[:, [0,1,3]]
         self.groups = groups
+        
+        
+    def drop(self, dataframe, colname, group = False):
+        if group:
+            pattern = re.compile(colname, flags = re.I)
+            colname = dataframe.columns.to_series()
+            index = colname.str.match(pattern)
+            colname_to_drop = colname[index]
+            return(dataframe.drop(colname_to_drop))
+        else:
+            return(dataframe.drop(colname))
         
         
 class acs(MarkeyDataTools):
@@ -58,6 +76,8 @@ class acs(MarkeyDataTools):
             table = self.find_variable_list(table)
         elif type(table) == list:
             table = ','.join(list(map(self.find_variable_list, table)))
+            
+            
     # For some reason, it sometimes generate multiple ,'s at the end
     # This should be substituted with a blank.
         pattern = re.compile(',,+')
@@ -76,15 +96,13 @@ class acs(MarkeyDataTools):
     # cleaning region
         self.region = self.find_census_region(region)
 
+        
     # generate the variable table
         self.gen_variable_table()
 
 
-
-
-
     def __repr__(self):
-        message = 'This module is to pull and search the American Community Survey Data; for more information, please visit https://github.com/gogo8232/MarkeyDataTools'      
+        message = 'This module is to pull and search the American Community Survey Data; for more information, please visit https://github.com/leeparkuky/MarkeyDataTools'      
         return(message)
 
     # This generates the variable table for the source of the data
@@ -150,6 +168,10 @@ class acs(MarkeyDataTools):
         self.acs_data = df
         return(self.acs_data)
     
+    
+    # You can search variable groups that might contain information of interest defined by the keyword
+    # For now, when the user gives a simple string, comma indicates "OR"
+    # It also accepts the regex pattern. However, users must make sure they are in the re.Pattern type
     def search(self, keyword, savefile = False, filename = ''):
         try:
             self.groups
@@ -174,4 +196,62 @@ class acs(MarkeyDataTools):
         else:
             return(self.search_result)
 
+
+    # With the given year and given group name, it will provide the description of the group
+    def gen_group_variable_desc(self, group):
+        try:
+            self.groups
+        except:
+            self.gen_acs_groups(year = self.year)
+        
+        if type(group) == str:
+            pattern = re.compile(f'{group}', flags = re.I)
+            while self.groups.name.str.match(pattern).sum() == 0:
+                group = str(input(f'{group} is not found in the acs5 dataset. \n Please check the name again and provide the correct one:'))
+                pattern = re.compile(f'{group}', flags = re.I)
+            search = self.variable_table.loc[self.variable_table.name.str.match(pattern),:]
+            search = search.sort_values(by = 'name')
+            self.group_variable_desc = search
+            return(search)
+        else:
+            if bool(iter(group)):
+                group_regex = '|'.join(map(lambda x: '(' + x + ')', group))
+                pattern = re.compile(group_regex, flags = re.I)
+                search = self.variable_table.loc[self.variable_table.name.str.match(pattern),:]
+                search = search.sort_values(by = 'name')
+                self.group_variable_desc = search
+                return(search)
+            else:
+                group = str(input('Please provide the appropriate group keyword, i.e. B28005: '))
+                pattern = re.compile(f'{group}', flags = re.I)
+                while self.groups.name.str.match(pattern).sum() == 0:
+                    group = str(input(f'{group} is not found in the acs5 dataset. \n Please check the name again and provide the correct one:'))
+                    pattern = re.compile(f'{group}', flags = re.I)
+                search = self.variable_table.loc[self.variable_table.name.str.match(pattern),:]
+                search = search.sort_values(by = 'name')
+                self.group_variable_desc = search
+                return(search)
             
+    
+    def rename_group(self, sub):
+        try:
+            self.acs_data
+        except:
+            self.gen_dataframe()
+        if type(sub) == dict: 
+            colname = self.acs_data.columns.to_series()
+            for key, values in sub.items():
+                pattern = re.compile(values, flags = re.I)
+                index = colname.str.match(pattern)
+                colname[index] = colname[index].str.replace(values, key)
+                self.acs_data.columns = colname
+        else:
+            print('You should provide a dictionary for the sub argument')
+            
+            
+    def group_drop(self, group_name):
+        self.acs_data = self.drop(self.acs_data, colname = group_name, group = True)
+        
+    # I will work on this later
+    def aggregate(self, variables, aggfunction = np.sum):
+        pass
