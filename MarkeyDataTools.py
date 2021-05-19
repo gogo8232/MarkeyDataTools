@@ -4,6 +4,7 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 pd.set_option('display.max_colwidth', 0)
+import itertools
 
 class MarkeyDataTools:
     # first, it stores the key (I think the key is not really required...)
@@ -166,6 +167,7 @@ class acs(MarkeyDataTools):
             df = df[colnames]
 
         self.acs_data = df
+        self.colname = df.columns.to_series()
         return(self.acs_data)
     
     
@@ -233,7 +235,7 @@ class acs(MarkeyDataTools):
                 return(search)
             
     
-    def rename_group(self, sub):
+    def rename_group(self, sub, inplace = False):
         try:
             self.acs_data
         except:
@@ -244,14 +246,101 @@ class acs(MarkeyDataTools):
                 pattern = re.compile(values, flags = re.I)
                 index = colname.str.match(pattern)
                 colname[index] = colname[index].str.replace(values, key)
-                self.acs_data.columns = colname
+                if inplace:
+                    self.acs_data.columns = colname
+                    return(self.acs_data)
+                else:
+                    data_copy = self.acs_data.copy()
+                    data_copy.columns = colname
+                    return(data_copy)
         else:
             print('You should provide a dictionary for the sub argument')
             
-            
-    def group_drop(self, group_name):
+    # This drops variables in the acs_data by the group name
+    def group_drop(self,  group_name):
         self.acs_data = self.drop(self.acs_data, colname = group_name, group = True)
         
-    # I will work on this later
-    def aggregate(self, variables, aggfunction = np.sum):
-        pass
+        
+    def group_isel(self, groupname, variable_suffix, stack = False):
+        copy = self.acs_data.copy()
+        if type(groupname) == str:
+            pattern = re.compile(groupname, flags = re.I)
+            colname = self.colname[self.colname.str.match(pattern)].sort_values()
+            colname.reset_index(drop = True, inplace = True)
+            if type(variable_suffix) != np.ndarray:
+                variable_suffix = np.array(variable_suffix)
+            variable_suffix = variable_suffix - 1
+            column_names = colname[variable_suffix]
+            column_names = colname.to_numpy()
+            column_names = np.append(self.colname.to_numpy()[:2], column_names)
+            table = copy.loc[:, column_names]
+        else:
+            colname = np.array(self.colname)
+            col = colname[:2]
+            colname = [self.colname[self.colname.str.match(re.compile(x, flags = re.I))].sort_values().reset_index(drop = True).to_numpy() for x in groupname]
+            if type(variable_suffix) != np.ndarray:
+                variable_suffix = np.array(variable_suffix)
+            variable_suffix = variable_suffix - 1
+            column_names = [x[y] for x,y in zip(colname, variable_suffix)]
+            N = len(column_names)
+            for i in range(N):
+                col = np.append(col, column_names[i])
+            table = copy.loc[:, col]
+        if stack:
+            stacked_table = table.set_index(list(table.columns[:2])).stack().reset_index()
+            stacked_col = stacked_table.columns.to_series()
+            stacked_col[2:] = ['Variable', 'Values']
+            stacked_table.columns = stacked_col
+            return(stacked_table)
+        else:
+            return(table)
+        
+        
+        
+        
+    # This aggregate on a series of variables and 
+    def aggregate(self, variables_dictionary, aggfunction = np.sum, inplace = False):
+        final_column = self.acs_data.columns.to_list()[:2]
+        colname = self.colname
+        copied_data = self.acs_data.copy()
+        for group, sub in variables_dictionary.items():
+            for new_name, suffices in sub.items():
+                final_column.append(new_name)
+                variables = ['(' + group + '_' + x + ')' for x in suffices]
+                regex = '|'.join(variables)
+                pattern = re.compile(regex, flags = re.I)
+                index = colname.str.match(pattern)
+                column = colname[index]
+                sliced = self.acs_data.copy()
+                sliced = sliced.loc[:, column]
+                sliced = sliced.astype(float)
+                if inplace:
+                    self.acs_data[new_name] = sliced.aggregate(func = aggfunction, axis = 1)
+                else:
+                    copied_data[new_name] = sliced.aggregate(func = aggfunction, axis = 1)
+        if inplace:
+            return(self.acs_data)
+        else:
+            return(copied_data.loc[:, final_column])
+        
+        
+    def gen_subgroups(self, new_variables, groups, name_variable=""):
+    # new_variables : sex, status
+    # groups : C15002, C15002A, C15002B, C15002I
+    # variable_suffix : male = [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]
+    #                   female = [20, 21, ..., 35]
+    #                   Less than highschool diploma = [3,4,5,6,7,8,9,10,20,21,22,23,24,25,26,27]
+    #                   High School Graduate  = [11, 12, ..., 28]
+    #                   Some College or Associate's Degree = [12, 13, 14, 29, 30, 31]
+    #                   Bachelor's = [15, 16, 17, 18, 32, 33, 34, 35]
+    # acs.gen_subgroups(new_variables = {sex: {male : [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18], female: ...}, status : {...}}, groups = ['C15002', 'C15002A','C15002B','C15002I'], name_variable = {'race': ['all','white','black', 'hispanic']}, use_npconcatenate = True)
+        variables = list(new_variables.keys())
+        subgroups = [list(x.keys()) for x in list(new_variables.values())]
+        subindex = [list(x.values()) for x in list(new_variables.values())]
+        comb_subgroups = itertools.product(subgroups)
+        comb_subindex = itertools.product(subindex)
+        self.comb_subgroups = comb_subgroups
+        self.comb_subindex = comb_subindex
+        
+    
+    
