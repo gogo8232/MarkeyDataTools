@@ -60,13 +60,37 @@ class MarkeyDataTools:
         
         
 class acs(MarkeyDataTools):
-    def __init__(self, year, table, source = 'acs5', state = 'KY', region = 'County'):
+    def __init__(self):
     # Run the init function of the parent class first
         super().__init__()
 
+        
+
+
+
+    def __repr__(self):
+        message = 'This module is to pull and search the American Community Survey Data; for more information, please visit https://github.com/leeparkuky/MarkeyDataTools'      
+        return(message)
+
+    def guide(self):
+        year = int(input('what year was the dataset created:'))
+        group = ""
+        groups = []
+        while group.lower() != "quit": 
+            group = str(input('provide a group name to include in your dataset [when you finished, please submit "quit"'))
+            groups.append(group)
+        acs = 'acs5'
+        response = str(input('Is the dataset "acs5"? [Yes/No]'))
+        if response.lower() == 'no':
+            acs = str(input('What is the dataset of interest:'))
+        geo_response = str(input('What is the geological level? [State, County, County Subdivision, Tract] :'))
+        self.insert_inputs(year, table = groups, source = acs, region = geo_response)
+
+
+
+    def insert_inputs(self, year, table, source = 'acs5', state = 'KY', region = 'County'):
     # assign values to the following attributes
         self.year = year
-        available_region = ['state','county','county subdivision']
         
         
     # complying with the API syntax for the sources.
@@ -104,14 +128,9 @@ class acs(MarkeyDataTools):
     # cleaning region
         self.region = self.find_census_region(region)
 
-        
     # generate the variable table
         self.gen_variable_table()
 
-
-    def __repr__(self):
-        message = 'This module is to pull and search the American Community Survey Data; for more information, please visit https://github.com/leeparkuky/MarkeyDataTools'      
-        return(message)
 
     # This generates the variable table for the source of the data
     def gen_variable_table(self):
@@ -192,7 +211,6 @@ class acs(MarkeyDataTools):
             self.groups
         except:
             self.get_acs_groups(self.year)
-        df = self.groups
         if type(keyword) == re.Pattern:
             self.search_result = self.groups.loc[self.groups.description.str.match(keyword), :]
         else:
@@ -374,19 +392,7 @@ class acs(MarkeyDataTools):
     def gen_subgroups(self, new_variables, groups):
         from functools import reduce
         from itertools import product
-#         arg1 = {'comp':  {'Computer in the Home': np.arange(3, 6), 'No Computer in the Home': np.array([6])},
-#         'status':  {'Broadband Access': np.array([4]) , 'No Broadband Access': np.array([3,5,6])}}
-#         acs.gen_subgroups(arg1, groups =['B28009A','B28009B'])
         self.refresh()
-    # new_variables : sex, status
-    # groups : C15002, C15002A, C15002B, C15002I
-    # variable_suffix : male = [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]
-    #                   female = [20, 21, ..., 35]
-    #                   Less than highschool diploma = [3,4,5,6,7,8,9,10,20,21,22,23,24,25,26,27]
-    #                   High School Graduate  = [11, 12, ..., 28]
-    #                   Some College or Associate's Degree = [12, 13, 14, 29, 30, 31]
-    #                   Bachelor's = [15, 16, 17, 18, 32, 33, 34, 35]
-    # acs.gen_subgroups(new_variables = {sex: {male : [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18], female: ...}, status : {...}}, groups = ['C15002', 'C15002A','C15002B','C15002I'], name_variable = {'race': ['all','white','black', 'hispanic']}, use_npconcatenate = True)
         # First, we need to find the combinations of the new_variables where they contain at least one original variable in the group.
         # For example, the combination of Age under 18 years and No computer in home and broadband access does not have cases because
         # not having a computer excludes the cases where you have the broadband access.
@@ -400,7 +406,7 @@ class acs(MarkeyDataTools):
         subgroups_index = list(map(lambda x : subgroups_index[x], (np.arange(len(subgroups_index))[np.not_equal(index_size, 0)])))
         subgroups_index = [x.tolist() for x in subgroups_index]
         copy = self.acs_data.copy().sort_values('FIPS')
-        frame = pd.DataFrame(comb_subgroups, columns = new_variables.keys())
+        frame = pd.DataFrame(comb_subgroups, columns = variables)
         n = frame.shape[0]
         p = frame.shape[1]
         N = copy.shape[0]
@@ -425,4 +431,15 @@ class acs(MarkeyDataTools):
             frame[groups[i]] = source.to_numpy().reshape(-1)
         frame = frame.reset_index(drop = True)
         return(frame)
-            
+    
+    
+    def merge_gen_subgroups(self, list_new_variables, list_groups):
+        output = self.gen_subgroups(list_new_variables[0], list_groups[0])
+        new_variables = list_new_variables[0]
+        # I just need to find n
+        variables = list(new_variables.keys())
+        n = len(variables)
+        for i in range(1, len(list_new_variables)):
+            new_output = self.gen_subgroups(list_new_variables[i], list_groups[i])
+            output = output.merge(new_output, on = list(output.columns[:3+n]))
+        return(output)
