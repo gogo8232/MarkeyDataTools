@@ -4,16 +4,23 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 pd.set_option('display.max_colwidth', 0)
-import itertools
 
 class MarkeyDataTools:
     # first, it stores the key (I think the key is not really required...)
     # For now, the available regions is state, county, county subdivision and tract.
     # I can add more if needed
     def __init__(self):
-        self.key = 'ba1c94e9a1b43440cf3ef2bf0b7803ddc39bcf2d'
+        self.insert_key()
         self.census_available_region = np.array(['state','county','county subdivision','tract'])
 
+        
+    def insert_key(self):
+        try:
+            print(self.key)
+        except:
+            self.key = str(input('insert your private key for the census data : '))
+        
+        
     # This doesn't really do much thing, but when the user defines ths region argument, 
     # I want to make sure that they are in the list self.census_available_region 
     def find_census_region(self, search_value):
@@ -121,6 +128,12 @@ class acs(MarkeyDataTools):
         var_name = ','.join(names)
         return(var_name)
 
+    
+    def refresh(self):
+        self.acs_data = self.acs_data.sort_values('FIPS').reset_index(drop = True)
+        
+        
+        
     # This generates the data frame using the arguments
     def gen_dataframe(self):
         if self.region == 'state':
@@ -248,10 +261,12 @@ class acs(MarkeyDataTools):
                 colname[index] = colname[index].str.replace(values, key)
                 if inplace:
                     self.acs_data.columns = colname
+                    self.refresh()
                     return(self.acs_data)
                 else:
                     data_copy = self.acs_data.copy()
                     data_copy.columns = colname
+                    data_copy = data_copy.sort_values('FIPS').reset_index(drop = True)
                     return(data_copy)
         else:
             print('You should provide a dictionary for the sub argument')
@@ -316,15 +331,53 @@ class acs(MarkeyDataTools):
                 sliced = sliced.astype(float)
                 if inplace:
                     self.acs_data[new_name] = sliced.aggregate(func = aggfunction, axis = 1)
+                    self.refresh()
                 else:
                     copied_data[new_name] = sliced.aggregate(func = aggfunction, axis = 1)
+                    copied_data = copied_data.sort_values('FIPS').reset_index( drop = True)
         if inplace:
             return(self.acs_data)
         else:
             return(copied_data.loc[:, final_column])
         
+    def iaggregate(self, variables_dictionary, aggfunction = np.sum, inplace = False):
+        self.refresh()
+        final_column = self.acs_data.columns.to_numpy()[:2]
+        colname =self.colname.sort_values()
+        copied_data = self.acs_data.copy().sort_values('FIPS').reset_index(drop = True)
+        for group, sub in variables_dictionary.items():
+            for new_name, suffices in sub.items():
+                final_column = np.append(final_column, f'{new_name}_{group}')
+                variables = np.array(suffices) - 1
+                index = colname.str.match(re.compile(group, flags = re.I))
+                column = colname[index]
+                column = column[variables]
+                sliced = self.acs_data.copy().sort_values('FIPS').reset_index(drop = True)
+                sliced = sliced.loc[:, column]
+                sliced = sliced.astype(float)
+                if inplace:
+                    self.acs_data[f'{new_name}_{group}'] = sliced.aggregate(func = aggfunction, axis = 1)
+                    self.refresh()
+                else:
+                    copied_data[f'{new_name}_{group}'] = sliced.aggregate(func = aggfunction, axis = 1)
+                    copied_data = copied_data.sort_values('FIPS').reset_index( drop = True)
+        if inplace:
+            self.refresh()
+            return(self.acs_data)
+        else:
+            return(copied_data.loc[:, final_column])
         
-    def gen_subgroups(self, new_variables, groups, name_variable=""):
+        
+        
+        
+        
+    def gen_subgroups(self, new_variables, groups):
+        from functools import reduce
+        from itertools import product
+#         arg1 = {'comp':  {'Computer in the Home': np.arange(3, 6), 'No Computer in the Home': np.array([6])},
+#         'status':  {'Broadband Access': np.array([4]) , 'No Broadband Access': np.array([3,5,6])}}
+#         acs.gen_subgroups(arg1, groups =['B28009A','B28009B'])
+        self.refresh()
     # new_variables : sex, status
     # groups : C15002, C15002A, C15002B, C15002I
     # variable_suffix : male = [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]
@@ -334,13 +387,42 @@ class acs(MarkeyDataTools):
     #                   Some College or Associate's Degree = [12, 13, 14, 29, 30, 31]
     #                   Bachelor's = [15, 16, 17, 18, 32, 33, 34, 35]
     # acs.gen_subgroups(new_variables = {sex: {male : [3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18], female: ...}, status : {...}}, groups = ['C15002', 'C15002A','C15002B','C15002I'], name_variable = {'race': ['all','white','black', 'hispanic']}, use_npconcatenate = True)
+        # First, we need to find the combinations of the new_variables where they contain at least one original variable in the group.
+        # For example, the combination of Age under 18 years and No computer in home and broadband access does not have cases because
+        # not having a computer excludes the cases where you have the broadband access.
         variables = list(new_variables.keys())
         subgroups = [list(x.keys()) for x in list(new_variables.values())]
         subindex = [list(x.values()) for x in list(new_variables.values())]
-        comb_subgroups = itertools.product(subgroups)
-        comb_subindex = itertools.product(subindex)
-        self.comb_subgroups = comb_subgroups
-        self.comb_subindex = comb_subindex
-        
-    
-    
+        comb_subgroups = np.array(list(product(*subgroups)))
+        subgroups_index = list(map(lambda x: reduce(np.intersect1d, x), list(product(*subindex))))
+        index_size = np.array(list(map(lambda x: x.shape[0], subgroups_index)))
+        comb_subgroups = comb_subgroups[np.not_equal(index_size, 0)]
+        subgroups_index = list(map(lambda x : subgroups_index[x], (np.arange(len(subgroups_index))[np.not_equal(index_size, 0)])))
+        subgroups_index = [x.tolist() for x in subgroups_index]
+        copy = self.acs_data.copy().sort_values('FIPS')
+        frame = pd.DataFrame(comb_subgroups, columns = new_variables.keys())
+        n = frame.shape[0]
+        p = frame.shape[1]
+        N = copy.shape[0]
+        frame = pd.concat([frame]*N, ignore_index = True)
+        index = np.repeat(copy.FIPS, n)
+        frame.index = index
+        frame = frame.merge(copy, left_index = True, how = 'left', left_on = 'FIPS', right_on = 'FIPS').iloc[:, [0, p+1, p+2 ] + list(range(1, p+1))]
+        comb_subgroups = list(map(lambda x: ' & '.join(x), comb_subgroups))
+        arg = dict(zip(comb_subgroups, subgroups_index))
+        arg1 = {}
+        if type(groups) == str:
+            arg1[groups] = arg
+        else:
+            for i in groups:
+                arg1[i]= arg
+        self.temp = self.iaggregate(arg1)
+        temp = self.temp.iloc[:,2:]
+        k = int(temp.shape[1]/n)
+        for i in range(int(k)):
+            column_index = range(i*n, (i+1)*n)
+            source = temp.iloc[:, column_index]
+            frame[groups[i]] = source.to_numpy().reshape(-1)
+        frame = frame.reset_index(drop = True)
+        return(frame)
+            
