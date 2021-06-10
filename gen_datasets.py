@@ -28,24 +28,23 @@ from income.income import income
 from income.poverty import poverty
 from insurance.insurance import insurance
 from nativity.nativity import nativity
-from origin.origin import origin
 from transportation.means import means
 from transportation.travel import travel
 
 
 variables = [aged, edu, employment, ethnicity, rent_to_income, tenure, vacancy,
-             years, income, poverty, insurance, nativity, origin, means, travel]
+             years, income, poverty, insurance, nativity,  means, travel]
 
 variable_names = ['age', 'education', 'employment', 'ethnicity','rent_to_income', 
                   'tenure', 'vacancy', 'years', 'income', 'poverty', 'insurance', 
-                  'nativity', 'origin', 'means', 'travel']
+                  'nativity', 'means', 'travel']
 
 var_dict = dict(zip(variable_names, variables))
 
 
 def tract_level_raw():
     print(list(var_dict.keys()))
-    var = str(input('type a variable to look up from above : ' ))
+    var = str(input('type a variable to look up from above : ' )).lower()
     _class = var_dict[var]()
     table = _class.table
     return(table)
@@ -53,7 +52,7 @@ def tract_level_raw():
 
 def tract_level_perc():
     print(list(var_dict.keys()))
-    var = str(input('type a variable to look up from above : ' ))
+    var = str(input('type a variable to look up from above : ' )).lower()
     _class = var_dict[var]()
     table = _class.percentage()
     return(table)
@@ -61,7 +60,7 @@ def tract_level_perc():
 
 def county_level_raw():
     print(list(var_dict.keys()))
-    var = str(input('type a variable to look up from above : ' ))
+    var = str(input('type a variable to look up from above : ' )).lower()
     _class = var_dict[var]()
     table = _class.define_region('county')
     table.reset_index(inplace = True)
@@ -70,7 +69,7 @@ def county_level_raw():
 
 def county_level_perc():
     print(list(var_dict.keys()))
-    var = str(input('type a variable to look up from above : ' ))
+    var = str(input('type a variable to look up from above : ' )).lower()
     _class = var_dict[var]()
     _class.define_region('county', return_table = False)
     table = _class.percentage()
