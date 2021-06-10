@@ -9,10 +9,13 @@ class MarkeyDataTools:
     # first, it stores the key (I think the key is not really required...)
     # For now, the available regions is state, county, county subdivision and tract.
     # I can add more if needed
-    def __init__(self):
-        self.insert_key()
+    def __init__(self, key = None):
+        if key == None:
+            self.insert_key()
+        else:
+            self.key = key
         self.census_available_region = np.array(['state','county','county subdivision','tract'])
-
+        self.tables_basket = None
         
     def insert_key(self):
         try:
@@ -48,6 +51,25 @@ class MarkeyDataTools:
         self.groups = groups
         
         
+        
+    def gen_acs_groups(self, year):
+        response_acs5 = requests.get(f'https://api.census.gov/data/{year}/acs/acs5/groups')
+        response_profile = requests.get(f'https://api.census.gov/data/{year}/acs/acs5/profile/groups')
+        try:
+            response_acs5.raise_for_status()
+            response_profile.raise_for_status()
+        except:
+            print('check the group json website')
+        acs5 = pd.DataFrame(response_acs5.json()['groups'])
+        profile = pd.DataFrame(response_profile.json()['groups'])
+        acs5['source'] = 'acs5'
+        profile['source'] = 'profile'
+        groups = pd.concat([acs5, profile], ignore_index = True)
+        groups = groups.iloc[:, [0,1,3]]
+        self.groups = groups
+
+        
+        
     def drop(self, dataframe, colname, group = False):
         if group:
             pattern = re.compile(colname, flags = re.I)
@@ -57,12 +79,25 @@ class MarkeyDataTools:
             return(dataframe.drop(colname_to_drop))
         else:
             return(dataframe.drop(colname))
-        
-        
+
+      
+
+    
+    def gen_pattern(self, subgroup_type):
+        if subgroup_type.lower() == 'sex':
+            pattern = re.compile('.*sex.*', flags = re.I)
+        elif subgroup_type.lower() == 'age':
+            pattern = re.compile('.*age.*', flags = re.I)
+        elif subgroup_type.lower() == 'both':
+            pattern = re.compile('(?=.*sex.*)(?=.*age.*)', flags = re.I)
+        else:
+            pattern = None
+        return(pattern)
+            
 class acs(MarkeyDataTools):
-    def __init__(self):
+    def __init__(self, Key = None):
     # Run the init function of the parent class first
-        super().__init__()
+        super().__init__(key = Key)
 
         
 
@@ -87,7 +122,36 @@ class acs(MarkeyDataTools):
         self.insert_inputs(year, table = groups, source = acs, region = geo_response)
 
 
-
+    def update_inputs(self, year = None, table = None, region = None, source = None):
+        if year == None:
+            pass
+        else:
+            self.year = year
+        
+        if table == None:
+            pass
+        else:
+            if type(table) == str:
+                table = self.find_variable_list(table)
+            elif type(table) == list:
+                table = pd.concat((list(map(self.find_variable_list, table))))
+            self.table_list = table
+                
+        if region == None:
+            pass
+        else:
+            self.region = self.find_census_region(region)
+        
+        self.gen_group_variable_desc(self.table_list)
+        if source == None:
+            pass
+        else:
+            self.source = source
+        
+        
+        
+        
+        
     def insert_inputs(self, year, table, source = 'acs5', state = 'KY', region = 'County'):
     # assign values to the following attributes
         self.year = year
@@ -107,14 +171,17 @@ class acs(MarkeyDataTools):
         if type(table) == str:
             table = self.find_variable_list(table)
         elif type(table) == list:
-            table = ','.join(list(map(self.find_variable_list, table)))
+            table = pd.concat((list(map(self.find_variable_list, table))))
+
             
+#         var_name = ','.join(names)
+#         return(var_name)            
             
     # For some reason, it sometimes generate multiple ,'s at the end
     # This should be substituted with a blank.
-        pattern = re.compile(',,+')
-        table = re.sub(pattern, '', table)   
-        self.table = table
+#         pattern = re.compile(',,+')
+#         table = re.sub(pattern, '', table)   
+        self.table_list = table
 
 
     # If the state is Kentucky, the FIPS code 21;
@@ -127,25 +194,113 @@ class acs(MarkeyDataTools):
 
     # cleaning region
         self.region = self.find_census_region(region)
-
+        self.gen_group_variable_desc(self.table_list)
     # generate the variable table
         self.gen_variable_table()
 
+    def acs5_variables(self):
+        try:
+            (self.year)
+        except:
+            self.year = 2019
+        response = requests.get(f'https://api.census.gov/data/{self.year}/acs/acs5/variables')
+        lists = response.json()
+        header , values = lists[0], lists[1:]
+        return(pd.DataFrame(values, columns = header))
+    
+    
 
+        
+    def sub_group_search(self, keyword_regex = None):
+        try:
+            self.year
+        except:
+            self.year = 2019
+        response = requests.get(f'https://api.census.gov/data/{self.year}/acs/acs5/subject/groups')
+        json = response.json()['groups']
+        table = pd.DataFrame(json).sort_values('name').reset_index(drop = True)
+        if keyword_regex == None:
+            return(table)
+        else:
+            pattern = re.compile(f'.*({keyword_regex}).*', flags = re.I)
+            finding = table.loc[table.description.str.match(pattern),:]
+            return(finding)
+        
+    def group_search(self, keyword_regex = None, B = True, subgroups = None):
+        '''possible choices of subgroups are sex, age, and both'''#################################################################
+        try:
+            self.year
+        except:
+            self.year = 2019
+        pattern = re.compile(f'(\s+({keyword_regex}).*)|(^({keyword_regex}).*)', flags = re.I)
+        if subgroups == None:
+            subgroups_pattern = re.compile('.*')
+        else:
+            subgroups_pattern = self.gen_pattern(subgroups)
+        try:
+            group_number = self.sub_group_search(keyword_regex).name.str.slice(1, 3).iloc[0,]
+        except:
+            if subgroups == None:
+                name_pattern = re.compile('B.*00[123]$')
+            else:
+                name_pattern = re.compile('B\d+$')
+            response = requests.get(f'https://api.census.gov/data/{self.year}/acs/acs5/groups')
+            json = response.json()['groups']
+            table = pd.DataFrame(json).sort_values('name').reset_index(drop = True)
+            if keyword_regex == None:
+                if B:
+                    table = table.loc[table.name.str.match(name_pattern),:]
+                return(table)
+            else:
+                pattern = re.compile(f'.*({keyword_regex}).*', flags = re.I)
+                if B:
+                    finding = table.loc[table.name.str.match(name_pattern)&table.description.str.match(pattern)&table.description.str.match(subgroups_pattern),:]
+                else:
+                    finding = table.loc[table.description.str.match(pattern)&table.description.str.match(subgroups_pattern),:]
+                return(finding)
+        else:
+            group_number = self.sub_group_search(keyword_regex).name.str.slice(1, 3).iloc[0,]
+            name_pattern = re.compile(f'B{group_number}\d+$')
+            response = requests.get(f'https://api.census.gov/data/{self.year}/acs/acs5/groups')
+            json = response.json()['groups']
+            table = pd.DataFrame(json).sort_values('name').reset_index(drop = True)
+            if keyword_regex == None:
+                if B:
+                    table = table.loc[table.name.str.match(name_pattern)&table.description.str.match(subgroups_pattern),:]
+                return(table)
+            else:
+                pattern = re.compile(f'.*({keyword_regex}).*', flags = re.I)
+                if B:
+                    finding = table.loc[table.name.str.match(name_pattern)&table.description.str.match(pattern)&table.description.str.match(subgroups_pattern),:]
+                else:
+                    finding = table.loc[table.description.str.match(pattern)&table.description.str.match(subgroups_pattern),:]
+                return(finding)
+        
+        
+    
     # This generates the variable table for the source of the data
     def gen_variable_table(self):
+        try:
+            a = self.source
+        except:
+            self.source = 'acs/acs5'
+            
         response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}/variables')
         lists = response.json()
         header, values = lists[0], lists[1:]
         self.variable_table =  pd.DataFrame(values, columns = header)
 
+        
+        
+        
     # From the variable table, this function allows you to find relevant variables from the 'table' argument you set up.
     def find_variable_list(self, var_name):
-        pattern = re.compile(f'{var_name}.*')
+        pattern = re.compile(f'{var_name}\_.*')
         sub_variables = self.variable_table.loc[self.variable_table.name.str.match(pattern),:]
+        size = sub_variables.shape[0]
         names = sub_variables.name
-        var_name = ','.join(names)
-        return(var_name)
+        return(names)
+
 
     
     def refresh(self):
@@ -154,23 +309,62 @@ class acs(MarkeyDataTools):
         
         
     # This generates the data frame using the arguments
-    def gen_dataframe(self):
+    def gen_dataframe(self, return_table = False):
+        n = 49
+        if self.table_list.shape[0] > n:
+            i = int(np.floor(self.table_list.shape[0]/n))
+            for j in range(i+1):
+                if j < i:
+                    table = self.table_list[n*j:n*(j+1)]
+                    table = ','.join(table)
+                    pattern = re.compile(',,+')
+                    table = re.sub(pattern, '', table)
+                    if j == 0:
+                        result = self.gen_single_frame(table)
+                    else:
+                        result.merge(self.gen_single_frame(table), on = 'FIPS' )
+                else:
+                    table = self.table_list[n*j:]
+                    table = ','.join(table)
+                    pattern = re.compile(',,+')
+                    table = re.sub(pattern, '', table)
+                    result.merge(self.gen_single_frame(table), on = 'FIPS' )
+            self.acs_data = result
+            self.colname = self.acs_data.columns
+            
+        else:
+            table = self.table_list
+            table = ','.join(table)
+            pattern = re.compile(',,+')
+            table = re.sub(pattern, '', table)   
+            self.acs_data = self.gen_single_frame(table)
+            self.colname = self.acs_data.columns
+        
+        if return_table:
+            return(self.acs_data)
+        
+        
+        
+        
+        
+    def gen_single_frame(self, table):
         if self.region == 'state':
-            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get={self.table}&for=state:{self.state}&key={self.key}')
+            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get={table}&for=state:{self.state}&key={self.key}')
         elif self.region == 'county':
-            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get=NAME,{self.table}&for=county:*&in=state:{self.state}&key={self.key}')
+            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get=NAME,{table}&for=county:*&in=state:{self.state}&key={self.key}')
         elif self.region == 'county subdivision':
-            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get=NAME,{self.table}&for=county%20subdivision:*&in=state:{self.state}&in=county:*&key={self.key}')
+            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get=NAME,{table}&for=county%20subdivision:*&in=state:{self.state}&in=county:*&key={self.key}')
         elif self.region == 'tract':
-            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get=NAME,{self.table}&for=tract:*&in=state:{self.state}&in=county:*&key={self.key}')
+            response = requests.get(f'https://api.census.gov/data/{self.year}/{self.source}?get=NAME,{table}&for=tract:*&in=state:{self.state}&in=county:*&key={self.key}')
         else:
             print('The region level is not found in the system')
 
         # separate the header and the values in the list of lists
+            
         header = response.json()[0]
         values = response.json()[1:]
         df = pd.DataFrame(values, columns = header)
-
+            
         if self.region == 'state':
             df.drop(['state'], axis = 1, inplace = True)       
 
@@ -198,9 +392,7 @@ class acs(MarkeyDataTools):
             colnames = pd.concat([pd.Series(df.columns[-4:]), pd.Series(df.columns[:-4])])
             df = df[colnames]
 
-        self.acs_data = df
-        self.colname = df.columns.to_series()
-        return(self.acs_data)
+        return(df)
     
     
     # You can search variable groups that might contain information of interest defined by the keyword
@@ -235,7 +427,7 @@ class acs(MarkeyDataTools):
         try:
             self.groups
         except:
-            self.gen_acs_groups(year = self.year)
+            self.gen_acs_groups(self.year)
         
         if type(group) == str:
             pattern = re.compile(f'{group}', flags = re.I)
@@ -310,7 +502,7 @@ class acs(MarkeyDataTools):
         else:
             colname = np.array(self.colname)
             col = colname[:2]
-            colname = [self.colname[self.colname.str.match(re.compile(x, flags = re.I))].sort_values().reset_index(drop = True).to_numpy() for x in groupname]
+            colname = [self.colname[self.colname.str.match(re.compile(x, flags = re.I))].sort_values().to_numpy() for x in groupname]
             if type(variable_suffix) != np.ndarray:
                 variable_suffix = np.array(variable_suffix)
             variable_suffix = variable_suffix - 1
@@ -413,7 +605,7 @@ class acs(MarkeyDataTools):
         frame = pd.concat([frame]*N, ignore_index = True)
         index = np.repeat(copy.FIPS, n)
         frame.index = index
-        frame = frame.merge(copy, left_index = True, how = 'left', left_on = 'FIPS', right_on = 'FIPS').iloc[:, [0, p+1, p+2 ] + list(range(1, p+1))]
+        frame = frame.merge(copy, how = 'left', left_on = 'FIPS', right_on = 'FIPS').iloc[:, [0, p+1, p+2 ] + list(range(1, p+1))]
         comb_subgroups = list(map(lambda x: ' & '.join(x), comb_subgroups))
         arg = dict(zip(comb_subgroups, subgroups_index))
         arg1 = {}
